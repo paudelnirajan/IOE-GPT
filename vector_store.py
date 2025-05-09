@@ -3,6 +3,7 @@ from pymilvus import connections, Collection, CollectionSchema, FieldSchema, Dat
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import JSONLoader
 from langchain_core.documents import Document
+from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
 import logging
@@ -115,6 +116,12 @@ class IOEGPTVectorStore:
 
     def add_documents(self, collection_id: str, documents: List[Document]) -> None:
         """Add documents to specified Milvus collection"""
+        # Validate collection ID
+        self._validate_collection(collection_id)
+        
+        # Ensure collection exists
+        self._ensure_collection_exists(collection_id)
+        
         logger.info(f"Adding {len(documents)} documents to collection {collection_id}")
         ids = []
         vectors = []
@@ -145,8 +152,54 @@ class IOEGPTVectorStore:
         self.collection_instances[collection_id].delete(expr)
         logger.info(f"Documents successfully deleted from collection {collection_id}")
 
+    def delete_collection(self, collection_id: str) -> None:
+        """Delete entire collection"""
+        try:
+            collection_name = self.collections[collection_id]["name"]
+            logger.info(f"Deleting collection: {collection_name}")
+            
+            # Drop the collection from Milvus
+            utility.drop_collection(collection_name)
+            
+            # Remove from local tracking
+            del self.collection_instances[collection_id]
+            # Don't delete from self.collections to allow recreation
+            # del self.collections[collection_id]
+            
+            logger.info(f"Collection {collection_name} successfully deleted")
+        except Exception as e:
+            logger.error(f"Failed to delete collection {collection_name}: {str(e)}")
+            raise
+
+    def _validate_collection(self, collection_id: str) -> None:
+        """Validate if collection ID exists in configuration"""
+        if collection_id not in self.collections:
+            logger.error(f"Invalid collection ID: {collection_id}")
+            raise ValueError(f"Invalid collection ID")
+
+    def _ensure_collection_exists(self, collection_id: str) -> None:
+        """Ensure collection exists in Milvus, create if it doesn't"""
+        try:
+            collection_name = self.collections[collection_id]["name"]
+            if not utility.has_collection(collection_name):
+                logger.info(f"Collection {collection_name} does not exist, creating it")
+                self._create_collection(collection_name)
+                self.collection_instances[collection_id] = Collection(collection_name)
+            elif collection_id not in self.collection_instances:
+                logger.info(f"Collection {collection_name} exists but not in instances, adding it")
+                self.collection_instances[collection_id] = Collection(collection_name)
+        except Exception as e:
+            logger.error(f"Failed to ensure collection exists: {str(e)}")
+            raise
+
     def search(self, collection_id: str, query: str, k: int = 5) -> List[Dict[str, Any]]:
         """Search similar documents in specified collection"""
+        # Validate collection ID
+        self._validate_collection(collection_id)
+        
+        # Ensure collection exists
+        self._ensure_collection_exists(collection_id)
+        
         logger.info(f"Searching for query: {query} with k={k} in collection {collection_id}")
         
         # Ensure collection is loaded

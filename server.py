@@ -43,6 +43,10 @@ class DeleteRequest(BaseModel):
     ids: str
     password: str
 
+class DeleteCollectionRequest(BaseModel):
+    collection_id: str
+    password: str
+
 @app.post("/update")
 async def update_documents(
     collection_id: str = Form(..., description="ID of the collection to update"),
@@ -105,10 +109,10 @@ async def search_documents(
 @app.post("/delete")
 async def delete_documents(
     collection_id: str = Form(..., description="ID of the collection to delete from"),
-    ids: str = Form(..., description="Comma-separated list of document IDs to delete"),
+    ids: str = Form(None, description="Comma-separated list of document IDs to delete (optional, if not provided, entire collection will be deleted)"),
     password: str = Form(..., description="Admin password for authentication")
 ):
-    """Delete documents from specified collection by their IDs"""
+    """Delete documents from specified collection by their IDs or delete entire collection if no IDs provided"""
     try:
         # Verify password
         if password != ADMIN_PASSWORD:
@@ -125,12 +129,17 @@ async def delete_documents(
                 detail=f"Invalid collection ID. Available collections: {list(vector_store.collections.keys())}"
             )
 
-        # Convert comma-separated IDs to list
-        id_list = [id.strip() for id in ids.split(",")]
-        
-        logger.info(f"Deleting documents from collection {collection_id} with IDs: {id_list}")
-        vector_store.delete_documents(collection_id, id_list)
-        return {"message": f"Successfully deleted {len(id_list)} documents"}
+        if ids:
+            # Delete specific documents
+            id_list = [id.strip() for id in ids.split(",")]
+            logger.info(f"Deleting documents from collection {collection_id} with IDs: {id_list}")
+            vector_store.delete_documents(collection_id, id_list)
+            return {"message": f"Successfully deleted {len(id_list)} documents"}
+        else:
+            # Delete entire collection
+            logger.info(f"Deleting entire collection: {collection_id}")
+            vector_store.delete_collection(collection_id)
+            return {"message": f"Successfully deleted collection: {collection_id}"}
     except Exception as e:
         logger.error(f"Error deleting documents: {str(e)}")
         raise HTTPException(status_code=500, detail=str(e))
