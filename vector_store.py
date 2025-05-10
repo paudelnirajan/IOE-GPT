@@ -3,6 +3,7 @@ from pymilvus import connections, Collection, CollectionSchema, FieldSchema, Dat
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_community.document_loaders import JSONLoader
 from langchain_core.documents import Document
+from langchain_core.vectorstores import VectorStore, InMemoryVectorStore
 from pydantic import BaseModel
 import os
 from dotenv import load_dotenv
@@ -240,6 +241,54 @@ class IOEGPTVectorStore:
         
         logger.info(f"Found {len(formatted_results)} results in collection {collection_id}")
         return formatted_results
+
+    def get_vector_store(self, collection_id: str) -> VectorStore:
+        """
+        Get a vector store instance for the specified collection.
+        
+        Args:
+            collection_id: ID of the collection to get vector store for
+            
+        Returns:
+            VectorStore: Vector store instance for the collection
+        """
+        # Validate collection ID
+        self._validate_collection(collection_id)
+        
+        # Ensure collection exists
+        self._ensure_collection_exists(collection_id)
+        
+        logger.info(f"Getting vector store for collection: {collection_id}")
+        
+        # Get collection instance
+        collection = self.collection_instances[collection_id]
+        
+        # Query all documents from the collection
+        results = collection.query(
+            expr="",  # Empty expression to get all documents
+            output_fields=["metadata", "text"]
+        )
+        
+        # Convert results to Document objects
+        docs = []
+        for result in results:
+            try:
+                # Create Document with metadata and text
+                doc = Document(
+                    page_content=result["text"],
+                    metadata=result["metadata"]
+                )
+                docs.append(doc)
+            except Exception as e:
+                logger.error(f"Error processing document: {e}")
+                continue
+        
+        # Create a temporary vector store with the documents
+        temp_store = InMemoryVectorStore(embedding=self.embeddings)
+        temp_store.add_documents(docs)
+        
+        logger.info(f"Created vector store with {len(docs)} documents")
+        return temp_store
 
     def close(self):
         """Close connection to Milvus"""
