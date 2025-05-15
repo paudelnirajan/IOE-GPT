@@ -2,9 +2,9 @@
 from Prompts.agent_prompt import C_PROGRAMMING_TEMPLATE
 from langchain_core.prompts import ChatPromptTemplate
 from Model.models import llm
-from tools.c_programming_tool import c_programming_questions
+from Graph.tools.c_programming_tool import get_past_questions
 
-all_tools = [c_programming_questions]
+all_tools = [get_past_questions]
 def get_c_programming_runnable():
     """
     Returns a runnable object
@@ -18,7 +18,7 @@ def get_c_programming_runnable():
 
     C_PROGRAMMING_PROMPT = ChatPromptTemplate.from_messages(
         [
-            ("system", C_PROGRAMMING_PROMPT),
+            ("system", C_PROGRAMMING_TEMPLATE),
             ("placeholder", "{messages}")
         ]
     )

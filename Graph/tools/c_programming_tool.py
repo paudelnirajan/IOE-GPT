@@ -1,204 +1,340 @@
-from json import tool
-from langchain_core.prompts import ChatPromptTemplate
-from vector_store import IOEGPTVectorStore
-from Schema.schema import QuestionSearch
 from Model.models import llm
-import json
-import os
-from dotenv import load_dotenv
-from typing import List, Dict, Any, Optional
-from langchain_core.documents import Document
-from dataclasses import dataclass
-import logging
+from vector_store import IoePastQuestionsVectorStore
+from langchain_core.prompts import ChatPromptTemplate
+from Schema.schema import QuestionSearch
+from Prompts.agent_prompt import QUESTION_PROMPT
+from typing_extensions import Dict, List
+from langchain_core.tools import tool
 
-# Configure logging
-logging.basicConfig(
-    level=logging.DEBUG,
-    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s'
-)
-logger = logging.getLogger(__name__)
-
-# Load environment variables
-load_dotenv()
-
-# Initialize the vector store with Milvus
-vector_store = IOEGPTVectorStore()
-logger.debug("Vector store initialized")
-
-@dataclass
-class QueryResult:
-    """Container for query results and metadata"""
-    query_result: QuestionSearch
-    filter_dict: Dict[str, Any]
-    is_metadata_only: bool
-
-class QuestionRetriever:
+class QuestionProcessor:
+    """Handles the processing of natural language queries into structured format."""
+    
     def __init__(self):
-        logger.debug("Initializing QuestionRetriever")
-        self.system_prompt = """You are an expert at converting user questions about past exam papers into structured JSON queries.
-        You have access to a database (JSON file) containing information about past exam questions for subjects like Computer Programming, Mathematics, and Digital Logic from various years and semesters.
-        Given a user's question, your goal is to construct a JSON query object that conforms to the `QuestionSearch` schema to retrieve the most relevant question(s) from the database.
-
-        When users mention multiple years, collect them into a list. For example:
-        - "questions from 2075, 2076 BS" → year_bs: [2075, 2076]
-        - "questions before year 2076" → year_bs: [2075, 2076] (DO NOT provide year before 2075)
-
-        You must identify key information in the user's request, such as:
-        - Subject name (e.g., "computer programming")
-        - Year (Specify BS or AD, e.g., "2080 BS", "2023 AD")
-        - Question type ("theory" or "programming")
-        - Question format ("short" or "long")
-        - Marks
-        - Topic
-        - Unit number
-        - Question number (e.g., "1a", "5b")
-        - Source ("regular" or "back" exam)
-        - Semester ("first", "second", etc.)
-        - Keywords within the question text itself.
-
-        Map this extracted information accurately to the corresponding fields in the `QuestionSearch` JSON schema.
-        - Pay close attention to the required fields and the allowed values for fields with `Literal` types (like `subject`, `type`, `format`, `source`, `semester`).
-        - Use `null` or omit optional fields if the information is not provided in the user's query.
-        - Do not invent information or assume details not explicitly stated by the user.
-        - If the user uses specific terms, acronyms, or numbers, preserve them accurately in the query values.
-        """
-        
-        self.prompt = ChatPromptTemplate.from_messages([
-            ("system", self.system_prompt),
-            ("human", "{question}"),
-        ])
         self.structured_llm = llm.with_structured_output(QuestionSearch)
-        self.structured_chain = self.prompt | self.structured_llm
-        logger.debug("QuestionRetriever initialization complete")
+        self.structured_chain = ChatPromptTemplate.from_messages([
+            ("system", QUESTION_PROMPT),
+            ("human", "{question}"),
+        ]) | self.structured_llm
 
-    def _is_metadata_only_query(self, query_result: QuestionSearch) -> bool:
-        metadata_fields = sum(1 for value in query_result.model_dump().values() if value is not None)
-        logger.debug(f"Metadata fields count: {metadata_fields}")
-        return metadata_fields <= 2
-
-    def _create_filter_dict(self, query_result: QuestionSearch) -> Dict[str, Any]:
-        filter_dict = {}
+    def create_dynamic_filter(self, query_result: QuestionSearch) -> tuple[str, bool]:
+        """
+        Create a Milvus filter expression from the query result.
         
-        for field_name, value in query_result.model_dump().items():
-            if value is None:
-                continue
-                
-            if field_name == 'subject':
-                filter_dict[field_name] = value.lower()
-            elif field_name in ['year_ad', 'year_bs'] and isinstance(value, list) and value:
-                filter_dict[field_name] = {"$in": value}
-            elif isinstance(value, list) and value:
-                filter_dict[field_name] = value
+        Returns:
+            Tuple containing:
+            - String containing the Milvus filter expression
+            - Boolean indicating if metadata_only is True
+        """
+        # Extract metadata_only before processing
+        metadata_only = query_result.metadata_only
+        
+        # Get the model dump and remove metadata_only
+        filter_dict = query_result.model_dump()
+        filter_dict.pop('metadata_only', False)
+        
+        filter_parts = []
+        
+        for field_name, value in filter_dict.items():
+            if value is not None:
+                # this field is redundant if we are building RAG for specific subject separately
+                if field_name == 'subject':
+                    pass
+                elif field_name in ['year_ad', 'year_bs'] and isinstance(value, list):
+                    if value:  # Only if the list is not empty
+                        years_str = ', '.join(map(str, value))
+                        filter_parts.append(f"{field_name} in [{years_str}]")
+                elif isinstance(value, list):
+                    if value:  # Only add if list is not empty
+                        values_str = ', '.join(f"'{v}'" for v in value)
+                        filter_parts.append(f"{field_name} in [{values_str}]")
+                else:
+                    if isinstance(value, str):
+                        filter_parts.append(f"{field_name} == '{value}'")
+                    else:
+                        filter_parts.append(f"{field_name} == {value}")
+        
+        return (" and ".join(filter_parts) if filter_parts else ""), metadata_only
+
+    def process_query(self, question: str) -> QuestionSearch:
+        """
+        Process the natural language query into a structured format.
+        
+        Args:
+            question: The natural language question from the user
+            
+        Returns:
+            Structured QuestionSearch object
+        """
+        return self.structured_chain.invoke({"question": question})
+
+
+class VectorStoreManager:
+    """Manages vector store operations and question retrieval."""
+    
+    def __init__(self, collection_name: str = "ioe_c_past_questions"):
+        self.collection_name = collection_name
+        self.vector_store_manager = IoePastQuestionsVectorStore()
+        self.question_processor = QuestionProcessor()
+
+    def get_filtered_questions(self, question: str, k: int = 3) -> List:
+        try:
+            vector_store = self.vector_store_manager.get_vector_store(
+                collection_name=self.collection_name
+            )
+            
+            # Process the query
+            query_result = self.question_processor.process_query(question)
+            filter_expression, metadata_only = self.question_processor.create_dynamic_filter(query_result)
+
+            print(f"[INFO] Filter dictionary: {filter_expression}")  # Debug print
+            print(f"[INFO] metadata_only field is {metadata_only}")
+            if metadata_only == True:
+                # Use search_by_metadata instead of as_retriever
+                print("[INFO] Returning questions based on <METADATA> filters...")
+                search_results = vector_store.search_by_metadata(
+                        expr=filter_expression,
+                        limit=k
+                    )
+                    
+                # Create a response dictionary with both results and filter info
+                response = {
+                    "results": [result.page_content for result in search_results],
+                    "filter_info": {
+                        "filter_expression": filter_expression,
+                        "metadata_only": metadata_only, # XXX may be this is not required
+                    }
+                }
+                return response
             else:
-                filter_dict[field_name] = value
-        
-        logger.debug(f"Created filter dictionary: {filter_dict}")
-        return filter_dict
-
-    def _filter_docs_by_metadata(self, docs: List[Document], filter_dict: Dict[str, Any]) -> List[Document]:
-        filtered_docs = []
-        
-        for doc in docs:
-            try:
-                doc_content = json.loads(doc.page_content)
-                if self._matches_filter_criteria(doc_content, filter_dict):
-                    filtered_docs.append(doc)
-            except json.JSONDecodeError:
-                logger.warning(f"Failed to parse document content: {doc.page_content[:100]}...")
-                continue
-                
-        logger.debug(f"Filtered {len(filtered_docs)} documents from {len(docs)} total")
-        return filtered_docs
-
-    def _matches_filter_criteria(self, doc_content: Dict[str, Any], filter_dict: Dict[str, Any]) -> bool:
-        for key, value in filter_dict.items():
-            if key in ['year_ad', 'year_bs']:
-                if isinstance(value, dict) and '$in' in value:
-                    if doc_content.get(key) not in value['$in']:
-                        return False
-            elif isinstance(value, list):
-                if not any(v in doc_content.get(key, []) for v in value):
-                    return False
-            else:
-                if str(doc_content.get(key, '')).lower() != str(value).lower():
-                    return False
-        return True
-
-    def _process_query(self, question: str) -> QueryResult:
-        logger.debug(f"Processing query: {question}")
-        query_result = self.structured_chain.invoke({"question": question})
-        filter_dict = self._create_filter_dict(query_result)
-        is_metadata_only = self._is_metadata_only_query(query_result)
-        
-        logger.debug(f"Query processed: is_metadata_only={is_metadata_only}")
-        return QueryResult(
-            query_result=query_result,
-            filter_dict=filter_dict,
-            is_metadata_only=is_metadata_only
-        )
-
-    def get_filtered_questions(self, question: str, k: int = 5) -> List[Document]:
-        logger.info(f"Getting filtered questions for query: {question}")
-        
-        # Process the query
-        query_info = self._process_query(question)
-        logger.debug(f"Filter dictionary: {query_info.filter_dict}")
-        
-        # Get vector store for collection
-        collection_store = vector_store.get_vector_store("c_past_questions")
-        
-        if query_info.is_metadata_only:
-            logger.debug("Using metadata-only filtering")
-            retriever = collection_store.as_retriever(search_kwargs={'k': 100})
-            docs = retriever.invoke("")
-            results = self._filter_docs_by_metadata(docs, query_info.filter_dict)[:k]
-        else:
-            logger.debug("Using semantic search with filtering")
-            retriever = collection_store.as_retriever(search_kwargs={'k': k})
-            results = retriever.invoke(question)
-            results = self._filter_docs_by_metadata(results, query_info.filter_dict)
-        
-        logger.info(f"Found {len(results)} matching questions")
-        return results
-
-# Create a singleton instance
-question_retriever = QuestionRetriever()
-
+                # semantic filtering
+                retriever = vector_store.as_retriever(
+                    search_kwargs={'k': k},
+                )
+                print("[INFO] Returning questions with <SEMANTIC> filtering...")
+                search_results = retriever.invoke(question)
+                # XXX may be, if we also pass the metadata and instruct llm to also describe about the question like-> this question was asked in year ... and ...
+                response = {
+                    "results": [result.page_content for result in search_results]
+                }
+                return response
+        except Exception as e:
+            print(f"Error getting filtered questions: {str(e)}")
+            raise
+    
 @tool
-def c_programming_questions(question: str, k: int = 5) -> List[Document]:
-    """Retrieves C programming questions from a vector store based on natural language queries.
-    
-    This tool processes natural language questions about C programming exam questions and returns
-    relevant matches from a database of past exam questions. It supports various query types including:
-    - Subject-specific questions
-    - Questions from specific years (BS or AD)
-    - Questions by type (theory or programming)
-    - Questions by format (short or long)
-    - Questions by marks, topic, unit number, or question number
-    - Questions by source (regular or back exam)
-    - Questions by semester
-    - Questions containing specific keywords
-    
-    The tool uses a combination of semantic search and metadata filtering to find the most relevant
-    questions. For metadata-only queries (e.g., "questions from 2075"), it filters based on exact
-    matches. For semantic queries (e.g., "questions about arrays"), it uses vector similarity search.
+def get_past_questions(question: str, k: int = 3) -> List:
+    """
+    Public function to get filtered questions based on the user's query.
     
     Args:
-        question (str): A natural language query describing the desired C programming questions.
-                       Examples:
-                       - "Show me programming questions from 2075 BS"
-                       - "Find theory questions about arrays"
-                       - "Get questions from first semester regular exam"
-        k (int, optional): Maximum number of questions to return. Defaults to 5.
+        question: Natural language question from user
+        k: Maximum number of results to retrieve
     
     Returns:
-        List[Document]: A list of Document objects containing the matched questions. Each Document
-                       contains the question content and associated metadata (year, type, format,
-                       marks, etc.).
-    
-    Note:
-        The tool automatically handles both BS and AD year formats, and can process queries
-        mentioning multiple years or date ranges.
+        List of relevant documents that match the filter criteria
     """
-    logger.info(f"Tool called with question: {question}, k: {k}")
-    return question_retriever.get_filtered_questions(question, k)
+    manager = VectorStoreManager()
+    return manager.get_filtered_questions(question, k) 
+
+
+
+
+
+
+
+
+
+# # this code below is for direct testing the tool 
+# # handles milvus connection on it's own, change the question and check filter dict generated and metadata_only field.
+
+# from vector_store import IoePastQuestionsVectorStore
+# from langchain_core.prompts import ChatPromptTemplate
+# from Schema.schema import QuestionSearch
+# from Prompts.agent_prompt import QUESTION_PROMPT
+# from typing_extensions import Dict, List
+# from pymilvus import connections, utility
+# import sys
+# import json
+# from Model.models import llm
+
+# class QuestionProcessor:
+#     """Handles the processing of natural language queries into structured format."""
+    
+#     def __init__(self):
+#         self.structured_llm = llm.with_structured_output(QuestionSearch)
+#         self.structured_chain = ChatPromptTemplate.from_messages([
+#             ("system", QUESTION_PROMPT),
+#             ("human", "{question}"),
+#         ]) | self.structured_llm
+
+#     def create_dynamic_filter(self, query_result: QuestionSearch) -> tuple[str, bool]:
+#         """
+#         Create a Milvus filter expression from the query result.
+        
+#         Returns:
+#             Tuple containing:
+#             - String containing the Milvus filter expression
+#             - Boolean indicating if metadata_only is True
+#         """
+#         # Extract metadata_only before processing
+#         metadata_only = query_result.metadata_only
+        
+#         # Get the model dump and remove metadata_only
+#         filter_dict = query_result.model_dump()
+#         filter_dict.pop('metadata_only', False)
+        
+#         filter_parts = []
+        
+#         for field_name, value in filter_dict.items():
+#             if value is not None:
+#                 # this field is redundant if we are building RAG for specific subject separately
+#                 if field_name == 'subject':
+#                     pass
+#                 elif field_name in ['year_ad', 'year_bs'] and isinstance(value, list):
+#                     if value:  # Only if the list is not empty
+#                         years_str = ', '.join(map(str, value))
+#                         filter_parts.append(f"{field_name} in [{years_str}]")
+#                 elif isinstance(value, list):
+#                     if value:  # Only add if list is not empty
+#                         values_str = ', '.join(f"'{v}'" for v in value)
+#                         filter_parts.append(f"{field_name} in [{values_str}]")
+#                 else:
+#                     if isinstance(value, str):
+#                         filter_parts.append(f"{field_name} == '{value}'")
+#                     else:
+#                         filter_parts.append(f"{field_name} == {value}")
+        
+#         return (" and ".join(filter_parts) if filter_parts else ""), metadata_only
+
+#     def process_query(self, question: str) -> QuestionSearch:
+#         """
+#         Process the natural language query into a structured format.
+        
+#         Args:
+#             question: The natural language question from the user
+            
+#         Returns:
+#             Structured QuestionSearch object
+#         """
+#         return self.structured_chain.invoke({"question": question})
+
+
+# class VectorStoreManager:
+#     """Manages vector store operations and question retrieval."""
+    
+#     def __init__(self, collection_name: str = "ioe_c_past_questions"):
+#         self.collection_name = collection_name
+#         self._connect_to_milvus()
+#         self.vector_store_manager = IoePastQuestionsVectorStore()
+#         self.question_processor = QuestionProcessor()
+
+#     def _connect_to_milvus(self):
+#         """Establish connection to Milvus server."""
+#         try:
+#             # Check if connection already exists
+#             if not connections.has_connection("default"):
+#                 connections.connect(
+#                     alias="default",
+#                     host="127.0.0.1",
+#                     port="19530"
+#                 )
+#                 print("Successfully connected to Milvus server")
+            
+#             # Verify collection exists
+#             if not utility.has_collection(self.collection_name):
+#                 print(f"Warning: Collection '{self.collection_name}' does not exist")
+#                 print("Please create the collection first using the update-vector-store endpoint")
+#                 sys.exit(1)
+                
+#         except Exception as e:
+#             print(f"Error connecting to Milvus: {str(e)}")
+#             print("Please ensure Milvus server is running on localhost:19530")
+#             sys.exit(1)
+
+#     def __del__(self):
+#         """Cleanup: disconnect from Milvus when the object is destroyed"""
+#         try:
+#             if connections.has_connection("default"):
+#                 connections.disconnect("default")
+#                 print("Disconnected from Milvus server")
+#         except:
+#             pass
+
+#     def get_filtered_questions(self, question: str, k: int = 3) -> List:
+#         try:
+#             vector_store = self.vector_store_manager.get_vector_store(
+#                 collection_name=self.collection_name
+#             )
+            
+#             # Process the query
+#             query_result = self.question_processor.process_query(question)
+#             filter_expression, metadata_only = self.question_processor.create_dynamic_filter(query_result)
+
+#             print(f"[INFO] Filter dictionary: {filter_expression}")  # Debug print
+#             print(f"[INFO] metadata_only field is {metadata_only}")
+#             if metadata_only == True:
+#                 # Use search_by_metadata instead of as_retriever
+#                 print("[INFO] Returning questions based on <METADATA> filters...")
+#                 search_results = vector_store.search_by_metadata(
+#                         expr=filter_expression,
+#                         limit=k
+#                     )
+                    
+#                 # Create a response dictionary with both results and filter info
+#                 response = {
+#                     "results": [result.page_content for result in search_results],
+#                     "filter_info": {
+#                         "filter_expression": filter_expression,
+#                         "metadata_only": metadata_only, # XXX may be this is not required
+#                     }
+#                 }
+#                 return response
+
+#             else:
+#                 # semantic filtering
+#                 retriever = vector_store.as_retriever(
+#                     search_kwargs={'k': k},
+#                 )
+#                 print("[INFO] Returning questions with <SEMANTIC> filtering...")
+#                 search_results = retriever.invoke(question)
+#                 # XXX may be, if we also pass the metadata and instruct llm to also describe about the question like-> this question was asked in year ... and ...
+#                 response = {
+#                     "results": [result.page_content for result in search_results]
+#                 }
+#                 return response
+#         except Exception as e:
+#             print(f"Error getting filtered questions: {str(e)}")
+#             raise
+
+# # Public API
+# def get_filtered_questions(question: str, k: int = 3) -> List:
+#     """
+#     Public function to get filtered questions based on the user's query.
+    
+#     Args:
+#         question: Natural language question from user
+#         k: Maximum number of results to retrieve
+    
+#     Returns:
+#         List of relevant documents that match the filter criteria
+#     """
+#     manager = VectorStoreManager()
+#     return manager.get_filtered_questions(question, k)
+
+# if __name__ == "__main__":
+#     # Example usage
+#     try:
+#         results = get_filtered_questions("what is void pointer", 2)
+        
+#         if not results:
+#             print("No results found matching your query.")
+#         else:
+#             print("\nFound the following questions:")
+#             print(results)
+#             # for i, result in enumerate(results, 1):
+#             #     print(f"\n--- Result {i} ---")
+#             #     print("Question:", result.page_content)
+#                 # metadata_without_vector = {k: v for k, v in result.metadata.items() if k != 'vector'}
+#                 # print("Metadata:", metadata_without_vector)
+#     except Exception as e:
+#         print(f"Error: {str(e)}")

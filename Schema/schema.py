@@ -1,5 +1,6 @@
 from typing import Literal, Optional, List, Tuple 
 from pydantic import BaseModel, Field
+from traitlets import Bool
 
 class QuestionSearch(BaseModel):
     """Search over the json file about the question of particular year or some particular metadata... ."""
@@ -9,7 +10,7 @@ class QuestionSearch(BaseModel):
         description="ID of a particular question. Will hold a value like 'subject_code+question_number'."
     )
 
-    subject: Literal["computer programming"] = Field(
+    subject: Literal["computer Programming"] = Field(
         description="Subject the question belongs to."
     )
 
@@ -22,11 +23,6 @@ class QuestionSearch(BaseModel):
     year_bs: Optional[List[int]] = Field(
         None,
         description="List of years in BS that the questions appeared."
-    )
-
-    question_text: Optional[str] = Field( # Added field for searching question text
-        None,
-        description="Keywords or full text to search within the question itself."
     )
 
     type: Optional[Literal["theory", "programming"]] = Field( 
@@ -54,11 +50,6 @@ class QuestionSearch(BaseModel):
         description="Unit the question is from."
     )
 
-    # tags: Optional[List[str]] = Field(
-    #     None,
-    #     description="Tags associated with the question."
-    # )
-
     question_number: Optional[str] = Field(
         None,
         description="Question number (e.g., '1a', '2b', 4, 5)."
@@ -72,5 +63,10 @@ class QuestionSearch(BaseModel):
     semester: Optional[Literal["first", "second", "third", "fourth", "fifth", "sixth", "seventh", "eighth"]] = Field(
          None,
          description="Semester the question is for." 
+    )
+
+    metadata_only: bool = Field(
+        default=False,
+        description="True if the user's query can be answered using only metadata filtering, False if semantic search is needed."
     )
 
