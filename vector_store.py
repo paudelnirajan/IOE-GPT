@@ -23,7 +23,7 @@ class IoePastQuestionsVectorStore:
         """Create Document objects from JSON data"""
         docs = []
         for item in json_data:
-            metadata = {k: v for k, v in item.items() if k != 'question'}
+            metadata = {k: v for k, v in item.items() if (k != 'question' and k != 'tags')}
             doc = Document(
                 page_content=item['question'],
                 metadata=metadata
