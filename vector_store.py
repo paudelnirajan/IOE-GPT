@@ -3,6 +3,7 @@ from langchain.schema import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_milvus import Milvus
 from pymilvus import utility
+from core.db_manager import db_manager
 
 class IoePastQuestionsVectorStore:
     def __init__(self, host="127.0.0.1", port="19530"):
@@ -10,9 +11,8 @@ class IoePastQuestionsVectorStore:
             "host": host,
             "port": port
         }
-        self.embeddings = HuggingFaceEmbeddings(
-            model_name="sentence-transformers/all-MiniLM-L6-v2"
-        )
+        # Use the embeddings from the global database manager
+        self.embeddings = db_manager.embeddings
     
     def load_json_data(self, file_path="formatted_data/c_question.json"):
         """Load data from a JSON file"""
@@ -23,7 +23,7 @@ class IoePastQuestionsVectorStore:
         """Create Document objects from JSON data"""
         docs = []
         for item in json_data:
-            metadata = {k: v for k, v in item.items() if k != 'question'}
+            metadata = {k: v for k, v in item.items() if (k != 'question' and k != 'tags')}
             doc = Document(
                 page_content=item['question'],
                 metadata=metadata
@@ -33,13 +33,7 @@ class IoePastQuestionsVectorStore:
     
     def get_vector_store(self, collection_name):
         """Get an existing vector store for a collection"""
-        if not utility.has_collection(collection_name):
-            raise ValueError(f"Collection name '{collection_name}' does not exist in database")
-        return Milvus(
-            embedding_function=self.embeddings,
-            connection_args=self.connection_args,
-            collection_name=collection_name
-        )
+        return db_manager.get_vector_store(collection_name)
     
     def update_vector_store(self, collection_name, file_path="formatted_data/c_question.json"):
         """Update a collection with documents from a JSON file"""
