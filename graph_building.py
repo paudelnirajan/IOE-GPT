@@ -10,19 +10,19 @@ from langgraph.checkpoint.memory import MemorySaver
 builder = StateGraph(State)
 
 builder.add_node("c_programming_assistant", Assistant(get_c_programming_runnable()))
-builder.add_node("get_past_questions_tool", create_tool_node_with_fallback([get_past_questions]))
+builder.add_node("get_past_questions", create_tool_node_with_fallback([get_past_questions]))
 
 builder.add_edge(START, "c_programming_assistant")
 builder.add_conditional_edges(
     "c_programming_assistant", 
     agent_router,
     [
-        "get_past_questions_tool",
+        "get_past_questions",
         END
     ]
     )
 
-builder.add_edge("get_past_questions_tool", "c_programming_assistant")
+builder.add_edge("get_past_questions", "c_programming_assistant")
 
 memory = MemorySaver()
 
