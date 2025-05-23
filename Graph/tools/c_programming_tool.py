@@ -8,7 +8,7 @@ def get_past_questions(question: str, k: int = 5) -> List:
     Tool to get filtered past questions based on the user's query.
     
     Args:
-        question: Natural language question from user
+        question: Detailed natural language question from user
         k: Maximum number of results to retrieve
     
     Returns:
