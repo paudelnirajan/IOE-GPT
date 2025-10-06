@@ -4,6 +4,7 @@ from Schema.schema import QuestionSearch
 from Prompts.agent_prompt import QUESTION_PROMPT
 from typing_extensions import Dict, List
 from core.db_manager import db_manager
+from langchain_core.documents import Document
 
 class QuestionProcessor:
     """Handles the processing of natural language queries into structured format."""
@@ -93,13 +94,23 @@ class VectorStoreManager:
                         limit=k
                     )
                     
+                # Filter out the vector field from each result
+                filtered_results = []
+                for result in search_results:
+                    # Create a new metadata dictionary without the vector field
+                    filtered_metadata = {k: v for k, v in result.metadata.items() if k != 'vector'}
+                    # print(f"[INFO] Filtered metadata\n----\n{filtered_metadata}\n----\n")
+                    
+                    # Create a new Document with filtered metadata
+                    filtered_doc = Document(
+                        page_content=result.page_content,
+                        metadata=filtered_metadata
+                    )
+                    filtered_results.append(filtered_doc)
+                    
                 # Create a response dictionary with both results and filter info
                 response = {
-                    "results": [result.page_content for result in search_results],
-                    "filter_info": {
-                        "filter_expression": filter_expression,
-                        "metadata_only": metadata_only,
-                    }
+                    "results": filtered_results,
                 }
                 return response
             else:
@@ -109,8 +120,23 @@ class VectorStoreManager:
                 )
                 print("[INFO] Returning questions with <SEMANTIC> filtering...")
                 search_results = retriever.invoke(question)
+                
+                # Filter out the vector field from each result
+                filtered_results = []
+                for result in search_results:
+                    # Create a new metadata dictionary without the vector field
+                    filtered_metadata = {k: v for k, v in result.metadata.items() if k != 'vector'}
+                    # print(f"[INFO] Filtered metadata\n----\n{filtered_metadata}\n----\n")
+                    
+                    # Create a new Document with filtered metadata
+                    filtered_doc = Document(
+                        page_content=result.page_content,
+                        metadata=filtered_metadata
+                    )
+                    filtered_results.append(filtered_doc)
+                    
                 response = {
-                    "results": [result.page_content for result in search_results]
+                    "results": filtered_results,
                 }
                 return response
         except Exception as e:

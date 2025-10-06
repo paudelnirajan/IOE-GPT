@@ -2,6 +2,9 @@ from langchain_core.runnables import Runnable, RunnableConfig, RunnableLambda
 from .state import State
 from langchain_core.messages import ToolMessage, AIMessage
 from langgraph.prebuilt import ToolNode
+from langchain_core.messages.utils import count_tokens_approximately
+from langmem.short_term import SummarizationNode
+from Model.models import llm
 
 class Assistant:
     def __init__(self, runnable: Runnable):
@@ -77,3 +80,16 @@ def create_tool_node_with_fallback(tools: list) -> dict:
     )
     print(f"[INFO] Tool node created successfully with fallback handler")
     return tool_node
+
+
+
+def create_summarization_node():
+    summarization_model = llm.bind(max_tokens=128)
+    
+    return SummarizationNode(
+        token_counter=count_tokens_approximately,
+        model=summarization_model,
+        max_tokens=1024,              
+        max_tokens_before_summary=512,
+        max_summary_tokens=256,      
+    )
