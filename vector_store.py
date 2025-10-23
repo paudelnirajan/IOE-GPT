@@ -1,5 +1,5 @@
 import json
-from langchain.schema import Document
+from langchain_core.documents import Document
 from langchain_huggingface import HuggingFaceEmbeddings
 from langchain_milvus import Milvus
 from pymilvus import utility

@@ -1,14 +1,25 @@
-langchain
-langchain-community
-langchain-core
-pymilvus
-fastapi
-uvicorn
-python-dotenv
-pydantic
-sentence-transformers
+# LangChain and AI Framework
+langchain>=0.3.27
+langchain-community>=0.4
+langchain-core>=1.0.0
+langchain-groq>=1.0.0
+langchain-huggingface>=1.0.0
+langchain-milvus>=0.2.1
+langgraph>=0.6.11
+langgraph-checkpoint-redis>=0.1.2
+
+# Vector Database
+pymilvus>=2.6.2
+redis>=6.4.0
+
+# Embeddings
+sentence-transformers>=5.1.2
+
+# API Framework
+fastapi>=0.119.1
+uvicorn>=0.38.0
 python-multipart
-langgraph
-langchain_core
-langchain_community
-langchain_groq
+
+# Utilities
+python-dotenv
+pydantic>=2.12.3

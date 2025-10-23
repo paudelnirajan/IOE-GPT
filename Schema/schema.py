@@ -1,6 +1,5 @@
 from typing import Literal, Optional, List, Tuple 
 from pydantic import BaseModel, Field
-from traitlets import Bool
 
 class QuestionSearch(BaseModel):
     """Search over the json file about the question of particular year or some particular metadata... ."""
