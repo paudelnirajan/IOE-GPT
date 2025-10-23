@@ -3,7 +3,7 @@ from .state import State
 from langchain_core.messages import ToolMessage, AIMessage
 from langgraph.prebuilt import ToolNode
 from langchain_core.messages.utils import count_tokens_approximately
-from langmem.short_term import SummarizationNode
+# from langmem.short_term import SummarizationNode
 from Model.models import llm
 
 class Assistant:
@@ -83,13 +83,24 @@ def create_tool_node_with_fallback(tools: list) -> dict:
 
 
 
-def create_summarization_node():
-    summarization_model = llm.bind(max_tokens=128)
+# def create_summarization_node():
+#     summarization_model = llm.bind(max_tokens=128)
     
-    return SummarizationNode(
-        token_counter=count_tokens_approximately,
-        model=summarization_model,
-        max_tokens=1024,              
-        max_tokens_before_summary=512,
-        max_summary_tokens=256,      
-    )
+#     return SummarizationNode(
+#         token_counter=count_tokens_approximately,
+#         model=summarization_model,
+#         max_tokens=1024,              
+#         max_tokens_before_summary=512,
+#         max_summary_tokens=256,      
+#     )
+
+def create_summarization_node():
+    # Placeholder summarization node - langmem disabled due to dependency conflicts
+    # To re-enable, install compatible langmem version and uncomment the import above
+    from langchain_core.runnables import RunnableLambda
+    
+    def passthrough(state):
+        """Pass through the state without summarization"""
+        return state
+    
+    return RunnableLambda(passthrough)
