@@ -4,12 +4,12 @@ An intelligent question retrieval system for IOE Computer Programming past quest
 
 ## Features
 
-- 🤖 AI-powered question search using natural language
-- 🔍 Semantic and metadata-based filtering
-- 📚 Vector database storage with Milvus
-- 🔄 Conversation state management with Redis
-- ⚡ Fast API endpoints with FastAPI
-- 🎯 Structured query processing with LLM
+-  AI-powered question search using natural language
+-  Semantic and metadata-based filtering
+-  Vector database storage with Milvus
+-  Conversation state management with Redis
+-  Fast API endpoints with FastAPI
+-  Structured query processing with LLM
 
 ## Quick Start
 
@@ -289,10 +289,6 @@ print(collections)
 3. Commit your changes
 4. Push to the branch
 5. Create a Pull Request
-
-## License
-
-[Add your license here]
 
 ## Acknowledgments
 
