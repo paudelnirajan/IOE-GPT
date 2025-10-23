@@ -23,3 +23,7 @@ python-multipart
 # Utilities
 python-dotenv
 pydantic>=2.12.3
+
+# Utilities
+python-dotenv
+pydantic>=2.12.3
